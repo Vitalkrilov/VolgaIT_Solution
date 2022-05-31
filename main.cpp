@@ -1,7 +1,9 @@
 ﻿#include "fairy_tail.hpp"
 
 #include <cstdlib>
+#ifdef __linux__
 #include <unistd.h>
+#endif
 #include <string>
 #include <deque>
 
@@ -225,12 +227,13 @@ int main() {
 
     std::cout << "There are some options:" << std::endl;
     std::string choice;
-
+#ifdef __linux__
     std::cout << "Do you want to see visualized progress?" << std::endl
     << "On every turn maps will be displayed with short delay. NOTICE: since it's an additional feature maps will differ from final variant (by syntax)." << std::endl
     << "Your choice ('y' or 'n'; default value is 'n'): ";
     getline(std::cin, choice);
     bool visualizationRequired = (choice.length() == 1 && choice[0] == 'y');
+#endif
 
     Fairyland world;
     CharData ivan;
@@ -239,12 +242,14 @@ int main() {
     while (true) {
         getEnvData(world, Character::Ivan, ivan);
         getEnvData(world, Character::Elena, elena);
-        
+
+#ifdef __linux__
         if (visualizationRequired) {
             std::cout << "\x1b[2J";
             printMaps(ivan, elena);
             usleep(100000);
         }
+#endif
 
         bool found;
         if (ivan.countOfUnexploredBlocks == 0 && elena.countOfUnexploredBlocks == 0) {
@@ -314,6 +319,7 @@ int main() {
 
             //TODO: steps
             // found = ...
+            // Здесь просто найти путь от Ивана к Елена и они придут друг к другу.
         } else if (ivan.countOfUnexploredBlocks == 0 && ivan.countOfExploredBlocks < elena.countOfExploredBlocks + elena.countOfUnexploredBlocks ||
             elena.countOfUnexploredBlocks == 0 && elena.countOfExploredBlocks < ivan.countOfExploredBlocks + ivan.countOfUnexploredBlocks) {
             std::cout << "They will never meet. They're in different \"rooms\" (one room is smaller than other by volume). Turns used: " << world.getTurnCount() << "." << std::endl;
