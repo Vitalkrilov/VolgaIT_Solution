@@ -1,9 +1,14 @@
 ﻿#include "fairy_tail.hpp"
 
-#include <cstdlib>
-#ifdef __linux__
-#include <unistd.h>
+#if defined(__linux__)
+    #include <unistd.h>
+    #define sleepms(milliseconds) usleep(milliseconds * 1000)
+#elif defined(_WIN32)
+    #include <Windows.h>
+    #define sleepms(milliseconds) Sleep(milliseconds)
 #endif
+
+#include <cstdlib>
 #include <string>
 #include <deque>
 
@@ -100,9 +105,21 @@ void getEnvData(Fairyland& world, Character ch, CharData& chardata) {
     }
 }
 
+char* map = nullptr;
+
 void printMaps(CharData& ivan, CharData& elena) {
     std::cout << "===========================================" << std::endl;
-    std::cout << "Ivan's map           | Elena's map" << std::endl;
+
+    std::string istatus;
+    std::string estatus;
+    if (map) {
+        istatus = estatus = "METSPT";
+    } else {
+        istatus = (ivan.countOfUnexploredBlocks ? "EXPLOR" : " WAIT ");
+        estatus = (elena.countOfUnexploredBlocks ? "EXPLOR" : " WAIT ");
+    }
+
+    std::cout << "Ivan's map [" << istatus << "]  | Elena's map [" << estatus << ']' << std::endl;
     for (int y = 0; y < CharData::mapleny; ++y) {
         for (int x = 0; x < CharData::maplenx; ++x) {
             if (x == ivan.posx+CharData::mapcenterx && y == ivan.posy+CharData::mapcentery)
@@ -114,8 +131,10 @@ void printMaps(CharData& ivan, CharData& elena) {
         for (int x = 0; x < CharData::maplenx; ++x) {
             if (x == elena.posx+CharData::mapcenterx && y == elena.posy+CharData::mapcentery)
                 std::cout << '*';
-            else
-                std::cout << elena.map[CharData::maplenx*y+x];
+            else {
+                if (elena.map[CharData::maplenx*y+x] == '@') std::cout << '&';
+                else std::cout << elena.map[CharData::maplenx*y+x];
+            }
         }
         std::cout << std::endl;
     }
@@ -214,26 +233,85 @@ void printMap(CharData& chardata) {
     }
 }
 
-char* newmap = nullptr;
-int ix, iy, ex, ey, mx, my;
+int ix, iy, ex, ey, mx, my, pathlen, meetingspot_x, meetingspot_y,
+    istartx, istarty, estartx, estarty; // for ease of realisation
 
 typedef struct {
     int x;
     int y;
 } vec2;
 
-int main() {
-    std::cout << "Program launched. By the way, final map can be smaller than 10x10 because sometimes we can't just say where exactly explored fragment located." << std::endl;
+bool isInMapBounds(int x, int y) {
+    return x >= 0 && y >= 0 && x < mx && y < my;
+}
 
-    std::cout << "There are some options:" << std::endl;
+bool tryToAdd(std::deque<vec2>& dq, int x, int y, char val) {
+    if (!isInMapBounds(x, y)) return false;
+    if (map[mx*y+x] != 0) return false;
+    vec2 v;
+    v.x = x;
+    v.y = y;
+    dq.push_back(v);
+    map[mx*y+x] = val;
+    return true;
+}
+
+bool tryToRegisterAsPath(int x, int y, int* origin_x, int* origin_y) {
+    if (!isInMapBounds(x, y)) return false;
+    if (map[mx*y+x] != map[mx*(*origin_y)+(*origin_x)] - 1) return false;
+    map[mx*(*origin_y)+(*origin_x)] = -126; // put path's symbol
+    *origin_x = x;
+    *origin_y = y;
+    return true;
+}
+
+bool tryToMoveOnPath(int x, int y, int* origin_x, int* origin_y) {
+    if (isInMapBounds(x, y) && map[mx*y+x] == -126) {
+        map[mx*(*origin_y)+(*origin_x)] = -125;
+        *origin_x = x;
+        *origin_y = y;
+        return true;
+    }
+    return false;
+}
+
+Direction getNextStep(int& charposx, int& charposy) {
+    Direction ret;
+    if (charposx == meetingspot_x && charposy == meetingspot_y)
+        ret = Direction::Pass;
+    else {
+        if (tryToMoveOnPath(charposx-1, charposy, &charposx, &charposy)) ret = Direction::Left;
+        else if (tryToMoveOnPath(charposx+1, charposy, &charposx, &charposy)) ret = Direction::Right;
+        else if (tryToMoveOnPath(charposx, charposy-1, &charposx, &charposy)) ret = Direction::Up;
+        else if (tryToMoveOnPath(charposx, charposy+1, &charposx, &charposy)) ret = Direction::Down;
+    }
+    return ret;
+}
+
+int main() {
+    std::cout << "Program launched. By the way, final map can be smaller than 10x10 because sometimes we can't just say where exactly explored fragment located. Or it can have 11 size x and/or y because it's impossible in almost all cases to determine what side to cut." << std::endl
+    << "Also: program shows count of used turns just after characters' meeting but there could be used extra 1-4 turns for determination of their relative positions." << std::endl << std::endl;
+
+    std::cout << "There are some options (they're kinda additional so I hope that their fails (if any?) will not decrease project's points...):" << std::endl << std::endl;
     std::string choice;
-#ifdef __linux__
-    std::cout << "Do you want to see visualized progress?" << std::endl
-    << "On every turn maps will be displayed with short delay. NOTICE: since it's an additional feature maps will differ from final variant (by syntax)." << std::endl
+
+    std::cout << "== Do you want to see visualized progress? ==" << std::endl << std::endl
+    << "On every turn maps will be displayed with short delay." << std::endl
+    << "NOTICE: since it's an additional feature maps will differ from final variant (by syntax)." << std::endl << std::endl
+    << "Meanings of statuses during visualization:" << std::endl
+    << "[EXPLOR] - character is exploring an area" << std::endl
+    << "[ WAIT ] - character is waiting for other to calculate meeting spot" << std::endl
+    << "[METSPT] - character is going to meeting spot" << std::endl << std::endl
     << "Your choice ('y' or 'n'; default value is 'n'): ";
     getline(std::cin, choice);
     bool visualizationRequired = (choice.length() == 1 && choice[0] == 'y');
-#endif
+    std::cout << std::endl;
+
+    std::cout << "== Do you want to explore all area? ==" << std::endl
+    << "Obviously, this most-likely will take more turns." << std::endl
+    << "Your choice ('y' or 'n'; default value is 'n'): ";
+    getline(std::cin, choice);
+    bool exploreEverything = (choice.length() == 1 && choice[0] == 'y');
 
     Fairyland world;
     CharData ivan;
@@ -243,17 +321,15 @@ int main() {
         getEnvData(world, Character::Ivan, ivan);
         getEnvData(world, Character::Elena, elena);
 
-#ifdef __linux__
         if (visualizationRequired) {
             std::cout << "\x1b[2J";
             printMaps(ivan, elena);
-            usleep(100000);
+            sleepms(100);
         }
-#endif
 
         bool found;
         if (ivan.countOfUnexploredBlocks == 0 && elena.countOfUnexploredBlocks == 0) {
-            if (!newmap) {
+            if (!map) {
                 int ivan_map_xs = 1000, ivan_map_xe = -1000,
                     ivan_map_ys = 1000, ivan_map_ye = -1000,
                     elena_map_xs = 1000, elena_map_xe = -1000,
@@ -279,11 +355,11 @@ int main() {
                     printMaps(ivan, elena);
                     return 0;
                 }
-                int map_sizex = ivan_map_xe - ivan_map_xs + 1;
-                int map_sizey = ivan_map_ye - ivan_map_ys + 1;
-                char* map = new char[map_sizex*map_sizey];
-                for (int y = 0; y < map_sizey; ++y) {
-                    for (int x = 0; x < map_sizex; ++x) {
+                mx = ivan_map_xe - ivan_map_xs + 1;
+                my = ivan_map_ye - ivan_map_ys + 1;
+                map = new char[mx*my];
+                for (int y = 0; y < my; ++y) {
+                    for (int x = 0; x < mx; ++x) {
                         char fst = ivan.map[CharData::maplenx*(ivan_map_ys+y)+(ivan_map_xs+x)],
                             snd = elena.map[CharData::maplenx*(elena_map_ys+y)+(elena_map_xs+x)];
                         if (fst != '?' && fst != '#') fst = ' ';
@@ -293,41 +369,114 @@ int main() {
                             printMaps(ivan, elena);
                             return 0;
                         }
-                        map[map_sizex*y+x] = fst;
+                        if (fst == '?') fst = -128;
+                        else if (fst == '#') fst = -127;
+                        else fst = 0;
+                        map[mx*y+x] = fst;
                     }
                 }
-                newmap = map;
-                mx = map_sizex;
-                my = map_sizey;
                 ix = ivan.posx+CharData::mapcenterx-ivan_map_xs;
                 iy = ivan.posy+CharData::mapcentery-ivan_map_ys;
                 ex = elena.posx+CharData::mapcenterx-elena_map_xs;
                 ey = elena.posy+CharData::mapcentery-elena_map_ys;
+                istartx = CharData::mapcenterx-ivan_map_xs;
+                istarty = CharData::mapcentery-ivan_map_ys;
+                estartx = CharData::mapcenterx-elena_map_xs;
+                estarty = CharData::mapcentery-elena_map_ys;
 
-                std::deque<vec2> dq;
-                vec2 v;
-                v.x = ix;
-                v.y = iy;
-                dq.push_back(v);
-                while (dq.size() > 0) {
-                    v = dq.front();
-                    dq.pop_front();
-
+                std::deque<vec2> queue;
+                tryToAdd(queue, ix, iy, 1);
+                while (queue.size() > 0) {
+                    int x = queue.front().x;
+                    int y = queue.front().y;
+                    queue.pop_front();
+                    tryToAdd(queue, x-1, y, map[mx*y+x]+1);
+                    tryToAdd(queue, x+1, y, map[mx*y+x]+1);
+                    tryToAdd(queue, x, y-1, map[mx*y+x]+1);
+                    tryToAdd(queue, x, y+1, map[mx*y+x]+1);
                 }
-                // TODO: get nums calcs
+
+                pathlen = map[mx*ey+ex] / 2;
+
+                //Build one path
+                {
+                    int x = ex, y = ey;
+                    while (true) {
+                        if (map[mx*y+x] == pathlen + 1) {
+                            meetingspot_x = x;
+                            meetingspot_y = y;
+                        }
+
+                        if (tryToRegisterAsPath(x-1, y, &x, &y) || tryToRegisterAsPath(x+1, y, &x, &y) ||
+                            tryToRegisterAsPath(x, y-1, &x, &y) || tryToRegisterAsPath(x, y+1, &x, &y))
+                            ; // registered
+
+                        // Block coords updated so we can check for path's ending and finish it
+                        if (map[mx*y+x] == 1) {
+                            map[mx*y+x] = -126;
+                            break;
+                        }
+                    }
+                }
             }
 
-            //TODO: steps
-            // found = ...
-            // Здесь просто найти путь от Ивана к Елена и они придут друг к другу.
+            Direction ivanDir = getNextStep(ix, iy);
+            Direction elenaDir = getNextStep(ex, ey);
+
+            // Sync positions (for map rendering)
+            ivan.posx = ix - istartx;
+            ivan.posy = iy - istarty;
+            elena.posx = ex - estartx;
+            elena.posy = ey - estarty;
+
+            found = world.go(ivanDir, elenaDir);
+            if (found) {
+                if (ix == meetingspot_x && iy == meetingspot_y &&
+                     ex == meetingspot_x && ey == meetingspot_y) {
+                     std::cout << std::endl << "Ffound. Used " << world.getTurnCount() << " turns. Final map:" << std::endl;
+                    int mapsizex = mx;
+                    int mapsizey = my;
+                    int ys = 0;
+                    int xs = 0;
+                    if (mapsizex == 12) {
+                        mapsizex = 10;
+                        xs += 2;
+                    }
+                    if (mapsizey == 12) {
+                        mapsizey = 10;
+                        ys += 2;
+                    }
+                    for (int y = ys; y < my; ++y) {
+                        for (int x = xs; x < mx; ++x) {
+                            if (map[mx*y+x] == -128) std::cout << '?';
+                            else if (map[mx*y+x] == -127) std::cout << '#';
+                            else {
+                                if (x == istartx && y == istarty)
+                                    std::cout << '@';
+                                else if (x == estartx && y == estarty)
+                                    std::cout << '&';
+                                else
+                                    std::cout << '.';
+                            }
+                        }
+                        std::cout << std::endl;
+                    }
+                    return 0;
+                 }
+                 // normally would not happen:
+
+                 //something went wrong if they met before getting together at meeting spot...
+                 exploreEverything = false;
+                 //ok, jumping to "unexpected" meeting handler
+            }
         } else if (ivan.countOfUnexploredBlocks == 0 && ivan.countOfExploredBlocks < elena.countOfExploredBlocks + elena.countOfUnexploredBlocks ||
             elena.countOfUnexploredBlocks == 0 && elena.countOfExploredBlocks < ivan.countOfExploredBlocks + ivan.countOfUnexploredBlocks) {
             std::cout << "They will never meet. They're in different \"rooms\" (one room is smaller than other by volume). Turns used: " << world.getTurnCount() << "." << std::endl;
             printMaps(ivan, elena);
             return 0;
-        } else // Simple exploring
+        } else // just exploring
             found = world.go(doCharTurn(ivan), doCharTurn(elena));
-        if (found) {
+        if (!exploreEverything && found) {
             std::cout << std::endl << "Found. Used " << world.getTurnCount() << " turns. Final map:" << std::endl;
 
             // Make these two stand in one block
